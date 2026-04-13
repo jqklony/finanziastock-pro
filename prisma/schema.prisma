@@ -1,0 +1,413 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========== AUTH & MULTI-TENANT ==========
+
+model Empresa {
+  id            String   @id @default(cuid())
+  nit           String   @unique
+  nombre        String
+  sector        String?
+  tamano        String?  // micro, pequena, mediana, grande
+  direccion     String?
+  ciudad        String?
+  telefono      String?
+  email         String?
+  logoUrl       String?
+  plan          String   @default("starter") // starter, negocio, distribuidor, enterprise
+  activo        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  usuarios      Usuario[]
+  sedes         Sede[]
+  productos     Producto[]
+  clientes      Cliente[]
+  proveedores   Proveedor[]
+  facturas      Factura[]
+  bodegas       Bodega[]
+  cuentas       CuentaContable[]
+  asientos      AsientoContable[]
+  movBancarios  MovimientoBanco[]
+  alertas       Alerta[]
+}
+
+model Usuario {
+  id          String   @id @default(cuid())
+  empresaId   String
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  email       String   @unique
+  nombre      String
+  password    String
+  rol         String   @default("usuario") // admin, contador, vendedor, cobrador, bodeguero
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([empresaId])
+}
+
+model Sede {
+  id          String   @id @default(cuid())
+  empresaId   String
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  nombre      String
+  direccion   String?
+  ciudad      String?
+  telefono    String?
+  
+  bodegas     Bodega[]
+
+  @@index([empresaId])
+}
+
+// ========== INVENTARIO ==========
+
+model Producto {
+  id            String   @id @default(cuid())
+  empresaId     String
+  empresa       Empresa  @relation(fields: [empresaId], references: [id])
+  sku           String
+  nombre        String
+  descripcion   String?
+  categoria     String?
+  unidadMedida  String   @default("unidad")
+  precioVenta   Float
+  costoPromedio Float    @default(0)
+  stockActual   Float    @default(0)
+  stockMinimo   Float    @default(0)
+  puntoReorden  Float?   // calculado por IA
+  leadTimeDias  Int      @default(7)
+  codigoBarras  String?
+  activo        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  proveedorId   String?
+  proveedor     Proveedor? @relation(fields: [proveedorId], references: [id])
+  
+  movimientos   MovimientoInventario[]
+  itemsFactura  ItemFactura[]
+
+  @@unique([empresaId, sku])
+  @@index([empresaId])
+}
+
+model Bodega {
+  id          String   @id @default(cuid())
+  empresaId   String
+  sedeId      String?
+  sede        Sede?    @relation(fields: [sedeId], references: [id])
+  nombre      String
+  direccion   String?
+  
+  movimientos MovimientoInventario[]
+
+  @@index([empresaId])
+}
+
+model MovimientoInventario {
+  id          String   @id @default(cuid())
+  productoId  String
+  producto    Producto @relation(fields: [productoId], references: [id])
+  bodegaId    String
+  bodega      Bodega   @relation(fields: [bodegaId], references: [id])
+  tipo        String   // entrada, salida, ajuste, transferencia
+  cantidad    Float
+  costoUnit   Float?
+  referencia  String?  // factura, orden_compra, ajuste_id
+  nota        String?
+  fecha       DateTime @default(now())
+
+  @@index([productoId])
+  @@index([bodegaId])
+}
+
+// ========== CLIENTES & PROVEEDORES ==========
+
+model Cliente {
+  id              String   @id @default(cuid())
+  empresaId       String
+  empresa         Empresa  @relation(fields: [empresaId], references: [id])
+  nitCliente      String
+  nombre          String
+  contacto        String?
+  email           String?
+  telefono        String?
+  whatsapp        String?
+  direccion       String?
+  ciudad          String?
+  categoria       String?  // tienda, restaurante, hotel, institucion
+  scoringRiesgo   Float?   // 0-100, calculado por IA
+  segmento        String?  // A, B, C, D
+  diasPromPago    Float?
+  activo          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  facturas        Factura[]
+  pagos           Pago[]
+  acuerdos        AcuerdoPago[]
+
+  @@unique([empresaId, nitCliente])
+  @@index([empresaId])
+}
+
+model Proveedor {
+  id          String   @id @default(cuid())
+  empresaId   String
+  nit         String
+  nombre      String
+  contacto    String?
+  email       String?
+  telefono    String?
+  leadTimeDias Int     @default(7)
+  
+  productos   Producto[]
+  ordenes     OrdenCompra[]
+
+  @@index([empresaId])
+}
+
+// ========== FACTURACION ==========
+
+model Factura {
+  id            String   @id @default(cuid())
+  empresaId     String
+  empresa       Empresa  @relation(fields: [empresaId], references: [id])
+  clienteId     String
+  cliente       Cliente  @relation(fields: [clienteId], references: [id])
+  numero        String
+  prefijo       String?
+  fecha         DateTime @default(now())
+  fechaVence    DateTime
+  subtotal      Float
+  iva           Float    @default(0)
+  retencion     Float    @default(0)
+  total         Float
+  saldo         Float    // total - pagos aplicados
+  estado        String   @default("emitida") // emitida, parcial, pagada, anulada, vencida
+  cufeDian      String?  // Codigo unico DIAN
+  pdfUrl        String?
+  xmlUrl        String?
+  observaciones String?
+  createdAt     DateTime @default(now())
+
+  items         ItemFactura[]
+  pagos         Pago[]
+  accionesCobro AccionCobro[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@index([clienteId])
+  @@index([estado])
+  @@index([fechaVence])
+}
+
+model ItemFactura {
+  id          String   @id @default(cuid())
+  facturaId   String
+  factura     Factura  @relation(fields: [facturaId], references: [id])
+  productoId  String?
+  producto    Producto? @relation(fields: [productoId], references: [id])
+  descripcion String
+  cantidad    Float
+  precioUnit  Float
+  iva         Float    @default(0)
+  total       Float
+
+  @@index([facturaId])
+}
+
+// ========== COBRANZA ==========
+
+model Pago {
+  id          String   @id @default(cuid())
+  facturaId   String
+  factura     Factura  @relation(fields: [facturaId], references: [id])
+  clienteId   String
+  cliente     Cliente  @relation(fields: [clienteId], references: [id])
+  monto       Float
+  metodo      String   // PSE, Nequi, transferencia, efectivo, tarjeta
+  referencia  String?
+  fecha       DateTime @default(now())
+  conciliado  Boolean  @default(false)
+
+  @@index([facturaId])
+  @@index([clienteId])
+}
+
+model SecuenciaCobro {
+  id          String   @id @default(cuid())
+  empresaId   String
+  nombre      String
+  segmento    String   // A, B, C, D
+  activa      Boolean  @default(true)
+  pasos       Json     // [{dia: -3, canal: "whatsapp", mensaje: "..."}, ...]
+
+  acciones    AccionCobro[]
+
+  @@index([empresaId])
+}
+
+model AccionCobro {
+  id            String   @id @default(cuid())
+  facturaId     String
+  factura       Factura  @relation(fields: [facturaId], references: [id])
+  secuenciaId   String?
+  secuencia     SecuenciaCobro? @relation(fields: [secuenciaId], references: [id])
+  paso          Int
+  canal         String   // whatsapp, email, sms, llamada
+  mensaje       String?
+  fechaEnvio    DateTime?
+  fechaRespuesta DateTime?
+  resultado     String?  // enviado, leido, respondido, pagado, sin_respuesta
+  linkPago      String?
+
+  @@index([facturaId])
+}
+
+model AcuerdoPago {
+  id          String   @id @default(cuid())
+  clienteId   String
+  cliente     Cliente  @relation(fields: [clienteId], references: [id])
+  montoTotal  Float
+  numCuotas   Int
+  valorCuota  Float
+  estado      String   @default("activo") // activo, completado, incumplido
+  firmaUrl    String?
+  createdAt   DateTime @default(now())
+
+  @@index([clienteId])
+}
+
+// ========== COMPRAS ==========
+
+model OrdenCompra {
+  id            String   @id @default(cuid())
+  empresaId     String
+  proveedorId   String
+  proveedor     Proveedor @relation(fields: [proveedorId], references: [id])
+  numero        String
+  fecha         DateTime @default(now())
+  total         Float
+  estado        String   @default("pendiente") // pendiente, enviada, recibida_parcial, completada
+  sugeridaPorIA Boolean  @default(false)
+
+  @@index([empresaId])
+}
+
+// ========== CONTABILIDAD ==========
+
+model CuentaContable {
+  id          String   @id @default(cuid())
+  empresaId   String
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  codigo      String   // Codigo PUC: 1105, 4135, 5105, etc.
+  nombre      String
+  tipo        String   // activo, pasivo, patrimonio, ingreso, gasto, costo
+  naturaleza  String   // debito, credito
+  nivel       Int      // 1, 2, 3, 4
+  saldo       Float    @default(0)
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+}
+
+model AsientoContable {
+  id          String   @id @default(cuid())
+  empresaId   String
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  fecha       DateTime
+  descripcion String
+  cuentaDebito String
+  cuentaCredito String
+  monto       Float
+  referencia  String?  // factura_id, pago_id, etc.
+  tipoOrigen  String?  // venta, compra, pago, cobro, ajuste
+  automatico  Boolean  @default(true)
+
+  @@index([empresaId])
+  @@index([fecha])
+}
+
+model MovimientoBanco {
+  id              String   @id @default(cuid())
+  empresaId       String
+  empresa         Empresa  @relation(fields: [empresaId], references: [id])
+  banco           String
+  fecha           DateTime
+  descripcion     String
+  monto           Float
+  tipo            String   // credito, debito
+  clasificacionIA String?  // cuenta contable sugerida por IA
+  confianzaIA     Float?   // 0-1
+  conciliado      Boolean  @default(false)
+  facturaRelId    String?
+  pagoRelId       String?
+
+  @@index([empresaId])
+  @@index([fecha])
+  @@index([conciliado])
+}
+
+// ========== IA & ALERTAS ==========
+
+model PrediccionDemanda {
+  id          String   @id @default(cuid())
+  empresaId   String
+  productoId  String
+  fecha       DateTime
+  cantidad    Float
+  confianza   Float    // 0-1
+  modelo      String   // xgboost, prophet
+  createdAt   DateTime @default(now())
+
+  @@index([empresaId, productoId])
+}
+
+model ScoringCliente {
+  id          String   @id @default(cuid())
+  empresaId   String
+  clienteId   String
+  score       Float    // 0-100
+  segmento    String   // A, B, C, D
+  variables   Json     // {dias_prom_pago: 15, facturas_vencidas: 2, ...}
+  fecha       DateTime @default(now())
+
+  @@index([empresaId, clienteId])
+}
+
+model PrediccionFlujo {
+  id              String   @id @default(cuid())
+  empresaId       String
+  fecha           DateTime
+  horizonte       Int      // 30, 60, 90 dias
+  montoOptimista  Float
+  montoProbable   Float
+  montoPesimista  Float
+  createdAt       DateTime @default(now())
+
+  @@index([empresaId])
+}
+
+model Alerta {
+  id          String   @id @default(cuid())
+  empresaId   String
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  tipo        String   // stock_bajo, cartera_vencida, flujo_critico, anomalia, vencimiento_tributario
+  severidad   String   // info, warning, critical
+  titulo      String
+  descripcion String
+  leida       Boolean  @default(false)
+  accion      String?  // URL o accion sugerida
+  createdAt   DateTime @default(now())
+
+  @@index([empresaId])
+  @@index([leida])
+}
